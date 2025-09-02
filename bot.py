@@ -5,7 +5,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler
 
 # ---------------- CONFIG ----------------
-BOT_TOKEN = "8418101664:AAGUUWpQVhrueHoP97W5laKOOlJ1LNKGQm8"
+BOT_TOKEN = "8418101664:AAGGo8z3XClfcCSULnWduKQTXIqqpwCR2FQ"
 FIREBASE_DB_URL = "https://skytasktonbot-default-rtdb.firebaseio.com"
 REFERRAL_EARNING_AMOUNT = 0.01
 DAILY_BONUS = 0.001
