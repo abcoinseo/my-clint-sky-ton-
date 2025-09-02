@@ -11,12 +11,16 @@ REFERRAL_EARNING_AMOUNT = 0.01
 DAILY_BONUS = 0.001
 MIN_WITHDRAW = 0.01
 BOT_USERNAME = "SkyTaskTon_bot"
-
 BANNER_URL = "https://i.postimg.cc/yNJ7n500/013213ab-a770-40cd-93c5-487045ad4a32.jpg"
 
 # ---------------- FIREBASE INIT ----------------
-cred = credentials.Certificate("serviceAccountKey.json")
-firebase_admin.initialize_app(cred, {'databaseURL': FIREBASE_DB_URL})
+try:
+    cred = credentials.Certificate("serviceAccountKey.json")
+    firebase_admin.initialize_app(cred, {'databaseURL': FIREBASE_DB_URL})
+except Exception as e:
+    print("❌ Firebase init failed:", e)
+    exit()
+
 users_ref = db.reference("users")
 withdrawals_ref = db.reference("withdrawals")
 
@@ -41,8 +45,10 @@ def get_top_users(limit=10):
 def daily_bonus():
     top3 = get_top_users(3)
     for user in top3:
-        new_balance = user.get("balance", 0) + DAILY_BONUS
-        update_user(user["chatId"], {"balance": new_balance})
+        user_id = user.get("chatId")
+        if user_id:
+            new_balance = user.get("balance", 0) + DAILY_BONUS
+            update_user(user_id, {"balance": new_balance})
 
 # ---------------- COMMANDS ----------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -50,11 +56,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args
     referred_by = args[0] if args else None
 
+    username = update.effective_user.username
+    if not username:
+        username = update.effective_user.first_name or "User"
+
     user = get_user(chat_id)
     if not user:
         user = {
             "chatId": chat_id,
-            "username": update.effective_user.username or update.effective_user.first_name,
+            "username": username,
             "balance": 0.0,
             "referrals": 0,
             "referredBy": None,
@@ -63,7 +73,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         }
         update_user(chat_id, user)
     else:
-        update_user(chat_id, {"username": update.effective_user.username or update.effective_user.first_name})
+        update_user(chat_id, {"username": username})
 
     # Referral bonus
     if referred_by and referred_by != chat_id and not user.get("referredBy"):
@@ -74,7 +84,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "referrals": ref_user.get("referrals", 0) + 1
             })
             update_user(chat_id, {"referredBy": referred_by})
-            await context.bot.send_message(ref_user["chatId"], f"🚀 You earned {REFERRAL_EARNING_AMOUNT} Ton! New user @{user['username']} joined.")
+            await context.bot.send_message(ref_user["chatId"], f"🚀 You earned {REFERRAL_EARNING_AMOUNT} Ton! New user @{username} joined.")
 
     # Welcome message with buttons
     keyboard = [
@@ -84,7 +94,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📊 Main Menu", callback_data="main_menu")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    welcome_text = f"🐸 Welcome to <b>Sky Task Ton</b>, @{update.effective_user.username or 'User'}!\n\nEarn and play with Ton coins!\n\nInvite friends using your referral link:\n{referral_link(chat_id)}"
+    welcome_text = f"🐸 Welcome to <b>Sky Task Ton</b>, @{username}!\n\nEarn and play with Ton coins!\n\nInvite friends using your referral link:\n{referral_link(chat_id)}"
     await context.bot.send_photo(chat_id=chat_id, photo=BANNER_URL, caption=welcome_text, parse_mode="HTML", reply_markup=reply_markup)
 
 # ---------------- MAIN MENU ----------------
@@ -105,6 +115,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     chat_id = str(query.message.chat.id)
     user = get_user(chat_id)
+    if not user:
+        await query.message.edit_text("❌ Please use /start first.")
+        return
     data = query.data
 
     if data == "main_menu":
@@ -149,9 +162,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data == "leaderboard":
         top_users = get_top_users(10)
-        msg = "🏆 Leaderboard Top 10:\n\n"
-        for i, u in enumerate(top_users, 1):
-            msg += f"{i}. @{u.get('username','N/A')} - {number_format(u.get('balance',0))} Ton\n"
+        if not top_users:
+            msg = "🏆 No users yet."
+        else:
+            msg = "🏆 Leaderboard Top 10:\n\n"
+            for i, u in enumerate(top_users, 1):
+                msg += f"{i}. @{u.get('username','N/A')} - {number_format(u.get('balance',0))} Ton\n"
         keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="main_menu")]]
         await query.message.edit_text(msg, reply_markup=InlineKeyboardMarkup(keyboard))
 
@@ -170,6 +186,10 @@ async def withdraw_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         update_user(chat_id, {"wallet": arg})
         return await update.message.reply_text(f"✅ Wallet set to: {arg}")
 
+    # Check wallet
+    if not user.get("wallet"):
+        return await update.message.reply_text("❌ Set wallet first using /withdraw <wallet>")
+
     # Withdraw amount
     try:
         amount = float(arg)
@@ -180,8 +200,6 @@ async def withdraw_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text(f"❌ Minimum withdraw is {MIN_WITHDRAW} Ton.")
     if amount > user.get("balance",0):
         return await update.message.reply_text("❌ Insufficient balance.")
-    if not user.get("wallet"):
-        return await update.message.reply_text("❌ Set wallet first using /withdraw <wallet>")
 
     # Deduct balance & add withdrawal record
     update_user(chat_id, {"balance": user.get("balance",0)-amount, "lastWithdrawal": int(time.time()*1000)})
@@ -236,5 +254,6 @@ app.add_handler(CommandHandler("profile", profile_cmd))
 app.add_handler(CommandHandler("refer", refer_cmd))
 app.add_handler(CallbackQueryHandler(button_handler))
 
-print("🚀 SkyTaskTon bot running...")
-app.run_polling()
+if __name__ == "__main__":
+    print("🚀 SkyTaskTon bot running...")
+    app.run_polling(drop_pending_updates=True)
